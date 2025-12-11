@@ -16,15 +16,21 @@ interface Video {
 }
 
 interface VideoListViewProps {
-  onSelectVideo: (video: Video) => void;
-  onEditVideo: (video: Video) => void;
-  refreshTrigger?: number;
+  contents: VideoContent[];
+  onSelectVideo: (content: VideoContent) => void;
+  onEditVideo: (content: VideoContent) => void;  // ← 加这一行
+  authors: Array<{ id: string; name: string; avatar: string; order: number }>;
+  checkInRecords: CheckInRecord[];
+  currentUserId?: string;
 }
 
 export default function VideoListView({
+  contents,
   onSelectVideo,
   onEditVideo,
-  refreshTrigger = 0,
+  authors,
+  checkInRecords,
+  currentUserId
 }: VideoListViewProps) {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
