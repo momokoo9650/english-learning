@@ -1,91 +1,128 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
+// 用户类型
 interface User {
   id: string;
   username: string;
-  role: "admin" | "author" | "user";
-  expiryDate?: Date;
+  role: "admin" | "student";
+  expiryDate?: string;
 }
 
-interface AuthContextType {
-  user: User | null;
-  token: string | null;
-  login: (username: string, password: string) => Promise<void>;
+// 权限定义
+interface Permissions {
+  canManageVideos: boolean;
+  canManageAccounts: boolean;
+  canManageAuthors: boolean;
+  canConfigureAI: boolean;
+  canBackup: boolean;
+}
+
+// 认证上下文类型
+export interface AuthContextType {
+  currentUser: User | null;
+  isAuthenticated: boolean;
+  permissions: Permissions;
+  login: (username: string, password: string) => Promise<boolean | string>;
   logout: () => void;
   isLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+  // 计算权限
+  const permissions: Permissions = {
+    canManageVideos: currentUser?.role === "admin",
+    canManageAccounts: currentUser?.role === "admin",
+    canManageAuthors: currentUser?.role === "admin",
+    canConfigureAI: currentUser?.role === "admin",
+    canBackup: currentUser?.role === "admin",
+  };
+
+  // 初始化时从 localStorage 恢复用户状态
   useEffect(() => {
-    const savedToken = localStorage.getItem("token");
-    if (savedToken) {
-      verifyToken(savedToken);
-    } else {
-      setIsLoading(false);
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("currentUser");
+
+    if (token && userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        
+        // 检查账户是否过期
+        if (user.expiryDate && new Date(user.expiryDate) < new Date()) {
+          console.log("账户已过期");
+          logout();
+        } else {
+          setCurrentUser(user);
+        }
+      } catch (error) {
+        console.error("解析用户信息失败:", error);
+        logout();
+      }
     }
+    
+    setIsLoading(false);
   }, []);
 
-  const verifyToken = async (savedToken: string) => {
+  // 登录函数
+  const login = async (username: string, password: string): Promise<boolean | string> => {
     try {
-      const response = await fetch(`${API_URL}/api/auth/verify`, {
-        headers: { Authorization: `Bearer ${savedToken}` },
+      const response = await fetch(`${API_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
       });
-      if (response.ok) {
-        const data = await response.json();
-        setUser(data.user);
-        setToken(savedToken);
-      } else {
-        localStorage.removeItem("token");
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return data.message || "登录失败";
       }
+
+      // 保存 token 和用户信息
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("currentUser", JSON.stringify(data.user));
+      setCurrentUser(data.user);
+
+      return true;
     } catch (error) {
-      console.error("验证失败:", error);
-      localStorage.removeItem("token");
-    } finally {
-      setIsLoading(false);
+      console.error("登录错误:", error);
+      return "网络错误，请检查后端服务是否启动";
     }
   };
 
-  const login = async (username: string, password: string) => {
-    const response = await fetch(`${API_URL}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "登录失败");
-    }
-
-    const data = await response.json();
-    setUser(data.user);
-    setToken(data.token);
-    localStorage.setItem("token", data.token);
-  };
-
+  // 登出函数
   const logout = () => {
-    setUser(null);
-    setToken(null);
     localStorage.removeItem("token");
+    localStorage.removeItem("currentUser");
+    setCurrentUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isLoading }}>
+    <AuthContext.Provider
+      value={{
+        currentUser,
+        isAuthenticated: !!currentUser,
+        permissions,
+        login,
+        logout,
+        isLoading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
 
+// 自定义 Hook
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
