@@ -1,297 +1,342 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
 
 const app = express();
+const PORT = process.env.PORT || 3001;
 
-app.use(cors({
-  origin: ['http://localhost:3000', 'http://47.114.117.255', 'http://www.echotube.me', 'https://www.echotube.me'],
-  credentials: true
-}));
+// 中间件
+app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// MongoDB 连接
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/english-learning')
   .then(() => console.log('✅ MongoDB 连接成功'))
   .catch(err => console.error('❌ MongoDB 连接失败:', err));
 
+// ============================================
+// 数据模型
+// ============================================
+
+// 用户模型
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'author', 'user'], default: 'user' },
-  expiryDate: Date,
+  role: { type: String, enum: ['admin', 'author', 'viewer'], default: 'viewer' },
+  expiryDate: { type: Date },
   createdAt: { type: Date, default: Date.now }
 });
 
+const User = mongoose.model('User', UserSchema);
+
+// 视频模型
 const VideoSchema = new mongoose.Schema({
-  title: String,
-  videoId: String,
-  videoSource: { type: String, enum: ['youtube', 'bilibili'], default: 'youtube' },
-  subtitles: String,
+  title: { type: String, required: true },
+  author: String,
+  youtubeUrl: String,
+  subtitleContent: String,
   keywords: [{
     word: String,
     translation: String,
     phonetic: String,
-    audioUrl: String,
-    partOfSpeech: String,
     definition: String,
-    exampleSentence: String,
+    example: String,
     exampleTranslation: String,
-    synonyms: String,
-    etymology: String,
-    imageUrl: String,
-    contextFromVideo: String
-  }],
-  checkInRecords: [{
-    date: Date,
-    step: Number
+    audioUrl: String
   }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const ConfigSchema = new mongoose.Schema({
-  key: { type: String, required: true, unique: true },
-  value: mongoose.Schema.Types.Mixed,
+  createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
 
-const User = mongoose.model('User', UserSchema);
 const Video = mongoose.model('Video', VideoSchema);
-const Config = mongoose.model('Config', ConfigSchema);
+
+// 学习记录模型
+const StudyRecordSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  videoId: { type: mongoose.Schema.Types.ObjectId, ref: 'Video', required: true },
+  completedSteps: [Number],
+  lastStudiedAt: { type: Date, default: Date.now }
+});
+
+const StudyRecord = mongoose.model('StudyRecord', StudyRecordSchema);
+
+// ============================================
+// 认证中间件
+// ============================================
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.status(401).json({ error: '未提供认证令牌' });
-  jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, user) => {
-    if (err) return res.status(403).json({ error: '令牌无效或已过期' });
+
+  if (!token) {
+    return res.status(401).json({ error: '未提供认证令牌' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET || 'default-secret-key', (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: '令牌无效或已过期' });
+    }
     req.user = user;
     next();
   });
 };
 
-const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: '需要管理员权限' });
-  }
-  next();
-};
+// ============================================
+// 认证路由
+// ============================================
 
+// 登录
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    
     const user = await User.findOne({ username });
-    if (!user) return res.status(401).json({ error: '用户名或密码错误' });
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) return res.status(401).json({ error: '用户名或密码错误' });
+    if (!user) {
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+
+    // 检查账户是否过期
     if (user.expiryDate && new Date() > user.expiryDate) {
       return res.status(403).json({ error: '账户已过期' });
     }
+
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+
     const token = jwt.sign(
-      { id: user._id, username: user.username, role: user.role },
-      process.env.JWT_SECRET || 'your-secret-key',
+      { userId: user._id, username: user.username, role: user.role },
+      process.env.JWT_SECRET || 'default-secret-key',
       { expiresIn: '7d' }
     );
+
     res.json({
       token,
-      user: { id: user._id, username: user.username, role: user.role, expiryDate: user.expiryDate }
+      user: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        expiryDate: user.expiryDate
+      }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('登录错误:', error);
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
+// 验证令牌
 app.get('/api/auth/verify', authenticateToken, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user.userId).select('-password');
     res.json({ user });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
-app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const users = await User.find().select('-password');
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// ============================================
+// 用户管理路由（仅管理员）
+// ============================================
 
-app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
+// 创建用户
+app.post('/api/users', authenticateToken, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
     const { username, password, role, expiryDate } = req.body;
+    
     const existingUser = await User.findOne({ username });
-    if (existingUser) return res.status(400).json({ error: '用户名已存在' });
+    if (existingUser) {
+      return res.status(400).json({ error: '用户名已存在' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
+    
     const user = new User({
       username,
       password: hashedPassword,
       role,
-      expiryDate: expiryDate ? new Date(expiryDate) : undefined
+      expiryDate: expiryDate ? new Date(expiryDate) : null
     });
+
     await user.save();
     res.status(201).json({ message: '用户创建成功', userId: user._id });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('创建用户错误:', error);
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
-app.put('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+// 获取所有用户
+app.get('/api/users', authenticateToken, async (req, res) => {
   try {
-    const { password, role, expiryDate } = req.body;
-    const updateData = { role, expiryDate };
-    if (password) {
-      updateData.password = await bcrypt.hash(password, 10);
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
     }
-    await User.findByIdAndUpdate(req.params.id, updateData);
-    res.json({ message: '用户更新成功' });
+
+    const users = await User.find().select('-password');
+    res.json(users);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
-app.delete('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+// 删除用户
+app.delete('/api/users/:id', authenticateToken, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
     await User.findByIdAndDelete(req.params.id);
     res.json({ message: '用户删除成功' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
+// ============================================
+// 视频管理路由
+// ============================================
+
+// 获取所有视频
 app.get('/api/videos', authenticateToken, async (req, res) => {
   try {
-    let query = {};
-    if (req.user.role === 'author') {
-      query.createdBy = req.user.id;
-    }
-    const videos = await Video.find(query).populate('createdBy', 'username');
+    const videos = await Video.find().sort({ createdAt: -1 });
     res.json(videos);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
+// 获取单个视频
 app.get('/api/videos/:id', authenticateToken, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
-    if (!video) return res.status(404).json({ error: '视频不存在' });
+    if (!video) {
+      return res.status(404).json({ error: '视频不存在' });
+    }
     res.json(video);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
+// 创建视频
 app.post('/api/videos', authenticateToken, async (req, res) => {
   try {
-    const video = new Video({ ...req.body, createdBy: req.user.id });
+    if (!['admin', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
+    const video = new Video({
+      ...req.body,
+      createdBy: req.user.userId
+    });
+
     await video.save();
     res.status(201).json(video);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('创建视频错误:', error);
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
+// 更新视频
 app.put('/api/videos/:id', authenticateToken, async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    if (!video) return res.status(404).json({ error: '视频不存在' });
-    if (req.user.role !== 'admin' && video.createdBy.toString() !== req.user.id) {
-      return res.status(403).json({ error: '无权限修改此视频' });
+    if (!['admin', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: '权限不足' });
     }
-    const updatedVideo = await Video.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(updatedVideo);
+
+    const video = await Video.findByIdAndUpdate(
+      req.params.id,
+      { ...req.body, updatedAt: new Date() },
+      { new: true }
+    );
+
+    if (!video) {
+      return res.status(404).json({ error: '视频不存在' });
+    }
+
+    res.json(video);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
+// 删除视频
 app.delete('/api/videos/:id', authenticateToken, async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    if (!video) return res.status(404).json({ error: '视频不存在' });
-    if (req.user.role !== 'admin' && video.createdBy.toString() !== req.user.id) {
-      return res.status(403).json({ error: '无权限删除此视频' });
+    if (!['admin', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: '权限不足' });
     }
+
     await Video.findByIdAndDelete(req.params.id);
     res.json({ message: '视频删除成功' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
-app.post('/api/videos/:id/checkin', authenticateToken, async (req, res) => {
-  try {
-    const { step } = req.body;
-    const video = await Video.findById(req.params.id);
-    if (!video) return res.status(404).json({ error: '视频不存在' });
-    video.checkInRecords.push({ date: new Date(), step: step });
-    await video.save();
-    res.json({ message: '打卡成功' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// ============================================
+// 学习记录路由
+// ============================================
 
-app.get('/api/config/:key', authenticateToken, async (req, res) => {
+// 更新学习记录
+app.post('/api/study-records', authenticateToken, async (req, res) => {
   try {
-    const config = await Config.findOne({ key: req.params.key });
-    res.json(config ? config.value : null);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    const { videoId, completedSteps } = req.body;
 
-app.post('/api/config', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { key, value } = req.body;
-    await Config.findOneAndUpdate(
-      { key },
-      { key, value, updatedAt: new Date() },
-      { upsert: true }
-    );
-    res.json({ message: '配置保存成功' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/backup/export', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const videos = await Video.find();
-    const users = await User.find().select('-password');
-    const configs = await Config.find();
-    res.json({
-      version: '1.0',
-      timestamp: new Date(),
-      data: { videos, users, configs }
+    let record = await StudyRecord.findOne({
+      userId: req.user.userId,
+      videoId
     });
+
+    if (record) {
+      record.completedSteps = completedSteps;
+      record.lastStudiedAt = new Date();
+      await record.save();
+    } else {
+      record = new StudyRecord({
+        userId: req.user.userId,
+        videoId,
+        completedSteps
+      });
+      await record.save();
+    }
+
+    res.json(record);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
 
-app.post('/api/backup/import', authenticateToken, requireAdmin, async (req, res) => {
+// 获取学习记录
+app.get('/api/study-records/:videoId', authenticateToken, async (req, res) => {
   try {
-    const { data } = req.body;
-    if (data.videos) {
-      await Video.deleteMany({});
-      await Video.insertMany(data.videos);
-    }
-    if (data.configs) {
-      await Config.deleteMany({});
-      await Config.insertMany(data.configs);
-    }
-    res.json({ message: '备份恢复成功' });
+    const record = await StudyRecord.findOne({
+      userId: req.user.userId,
+      videoId: req.params.videoId
+    });
+
+    res.json(record || { completedSteps: [] });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: '服务器错误' });
   }
 });
+
+// ============================================
+// 健康检查
+// ============================================
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -301,25 +346,34 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ============================================
+// 启动服务器
+// ============================================
+
+app.listen(PORT, () => {
+  console.log(`🚀 服务器运行在端口 ${PORT}`);
+  console.log(`📍 API 地址: http://localhost:${PORT}`);
+});
+
+// 初始化管理员账户（仅在首次运行时）
 async function initializeAdmin() {
   try {
     const adminExists = await User.findOne({ username: 'admin' });
     if (!adminExists) {
       const hashedPassword = await bcrypt.hash('admin123', 10);
-      await User.create({
+      const admin = new User({
         username: 'admin',
         password: hashedPassword,
         role: 'admin'
       });
+      await admin.save();
       console.log('✅ 默认管理员账户已创建 (admin/admin123)');
     }
   } catch (error) {
-    console.error('❌ 初始化管理员账户失败:', error);
+    console.error('初始化管理员账户失败:', error);
   }
 }
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(\`🚀 服务器运行在端口 \${PORT}\`);
+mongoose.connection.once('open', () => {
   initializeAdmin();
 });
