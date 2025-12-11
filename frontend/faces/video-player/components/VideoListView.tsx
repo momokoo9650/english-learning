@@ -1,96 +1,106 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Play, Trash2, Edit, CheckCircle } from "lucide-react";
-import { useAuth } from "./AuthContext";
+import { Play, Edit, Trash2, Plus, Upload } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-interface Video {
-  _id: string;
+export interface VideoContent {
+  _id?: string;
+  id: string;
   title: string;
-  videoId: string;
-  videoSource: string;
-  createdAt: string;
-  checkInRecords?: Array<{ date: Date; step: number }>;
+  videoUrl: string;
+  subtitleFile?: string;
+  subtitles?: Array<{
+    start: number;
+    end: number;
+    text: string;
+    translation?: string;
+  }>;
+  keywords?: Array<{
+    word: string;
+    phonetic?: string;
+    partOfSpeech?: string;
+    chineseDefinition?: string;
+    englishDefinition?: string;
+    examples?: Array<{ en: string; zh: string }>;
+    synonyms?: string;
+    antonyms?: string;
+    usage?: string;
+    memoryTip?: string;
+  }>;
+  checkInRecords?: Array<{
+    date: string;
+    step: number;
+  }>;
 }
 
-interface VideoListViewProps {
-  contents: VideoContent[];
-  onSelectVideo: (content: VideoContent) => void;
-  onEditVideo: (content: VideoContent) => void;  // ← 加这一行
-  authors: Array<{ id: string; name: string; avatar: string; order: number }>;
-  checkInRecords: CheckInRecord[];
-  currentUserId?: string;
+export interface VideoListViewProps {
+  onSelectVideo: (video: VideoContent) => void;
+  onEditVideo: (video: VideoContent) => void;
+  refreshTrigger?: number;
 }
 
 export default function VideoListView({
-  contents,
   onSelectVideo,
   onEditVideo,
-  authors,
-  checkInRecords,
-  currentUserId
+  refreshTrigger,
 }: VideoListViewProps) {
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [videos, setVideos] = useState<VideoContent[]>([]);
   const [loading, setLoading] = useState(true);
-  const { token, user } = useAuth();
-
-  useEffect(() => {
-    fetchVideos();
-  }, [token, refreshTrigger]);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
   const fetchVideos = async () => {
     try {
+      setLoading(true);
+      const token = localStorage.getItem("token");
       const response = await fetch(`${API_URL}/api/videos`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
-      if (response.ok) {
-        const data = await response.json();
-        setVideos(data);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch videos");
       }
+
+      const data = await response.json();
+      setVideos(data);
     } catch (error) {
-      console.error("获取视频列表失败:", error);
+      console.error("Error fetching videos:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
+  useEffect(() => {
+    fetchVideos();
+  }, [refreshTrigger]);
+
+  const handleDelete = async (videoId: string) => {
     if (!confirm("确定要删除这个视频吗？")) return;
 
     try {
-      const response = await fetch(`${API_URL}/api/videos/${id}`, {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/api/videos/${videoId}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
-      if (response.ok) {
-        alert("删除成功");
-        fetchVideos();
-      } else {
-        const error = await response.json();
-        alert(error.error || "删除失败");
+      if (!response.ok) {
+        throw new Error("Failed to delete video");
       }
+
+      fetchVideos();
     } catch (error) {
-      console.error("删除失败:", error);
+      console.error("Error deleting video:", error);
       alert("删除失败");
     }
   };
 
-  const getCheckInDays = (video: Video) => {
-    if (!video.checkInRecords || video.checkInRecords.length === 0) return 0;
-    const uniqueDates = new Set(
-      video.checkInRecords.map((record) =>
-        new Date(record.date).toDateString()
-      )
-    );
-    return uniqueDates.size;
-  };
-
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex items-center justify-center h-64">
         <div className="text-gray-500">加载中...</div>
       </div>
     );
@@ -98,56 +108,48 @@ export default function VideoListView({
 
   if (videos.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        还没有视频，点击「语料管理」添加第一个视频吧！
+      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+        <Upload className="w-12 h-12 mb-4 opacity-50" />
+        <p>还没有视频</p>
+        <p className="text-sm">点击右上角「语料管理」添加视频</p>
       </div>
     );
   }
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {videos.map((video) => (
         <div
-          key={video._id}
-          className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition-shadow"
+          key={video._id || video.id}
+          className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow"
         >
-          <div className="p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-2 line-clamp-2">
+          <div className="aspect-video bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+            <Play className="w-16 h-16 text-white opacity-80" />
+          </div>
+          <div className="p-4">
+            <h3 className="font-semibold text-lg mb-2 line-clamp-2">
               {video.title}
             </h3>
-            <div className="text-sm text-gray-500 mb-4">
-              {new Date(video.createdAt).toLocaleDateString()}
-            </div>
-
-            <div className="flex items-center gap-2 mb-4 text-sm text-gray-600">
-              <CheckCircle size={16} className="text-green-500" />
-              <span>已打卡 {getCheckInDays(video)} 天</span>
-            </div>
-
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-4">
               <button
                 onClick={() => onSelectVideo(video)}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex-1 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors text-sm flex items-center justify-center gap-2"
               >
-                <Play size={16} />
+                <Play className="w-4 h-4" />
                 学习
               </button>
-
               <button
                 onClick={() => onEditVideo(video)}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 transition-colors"
               >
-                <Edit size={16} />
+                <Edit className="w-4 h-4" />
               </button>
-
-              {(user?.role === "admin" || user?.role === "author") && (
-                <button
-                  onClick={() => handleDelete(video._id)}
-                  className="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
+              <button
+                onClick={() => handleDelete(video._id || video.id)}
+                className="bg-red-100 text-red-600 px-4 py-2 rounded hover:bg-red-200 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
