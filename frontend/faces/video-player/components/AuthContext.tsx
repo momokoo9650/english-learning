@@ -6,16 +6,17 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 interface User {
   id: string;
   username: string;
+  displayName: string;
   role: "admin" | "student";
   expiryDate?: string;
 }
 
 // 权限定义
 interface Permissions {
-  canManageVideos: boolean;
+  canManageContent: boolean;
   canManageAccounts: boolean;
   canManageAuthors: boolean;
-  canConfigureAI: boolean;
+  canManageAI: boolean;
   canBackup: boolean;
 }
 
@@ -34,23 +35,21 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
   // 计算权限
   const permissions: Permissions = {
-    canManageVideos: currentUser?.role === "admin",
+    canManageContent: currentUser?.role === "admin",
     canManageAccounts: currentUser?.role === "admin",
     canManageAuthors: currentUser?.role === "admin",
-    canConfigureAI: currentUser?.role === "admin",
+    canManageAI: currentUser?.role === "admin",
     canBackup: currentUser?.role === "admin",
   };
 
   // 初始化时从 localStorage 恢复用户状态
   useEffect(() => {
-    const token = localStorage.getItem("token");
     const userStr = localStorage.getItem("currentUser");
 
-    if (token && userStr) {
+    if (userStr) {
       try {
         const user = JSON.parse(userStr);
         
@@ -73,35 +72,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 登录函数
   const login = async (username: string, password: string): Promise<boolean | string> => {
     try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      // 模拟本地验证（实际生产环境应该调用后端 API）
+      const defaultAccounts = [
+        {
+          id: "admin-001",
+          username: "admin",
+          password: "admin123",
+          displayName: "管理员",
+          role: "admin" as const
         },
-        body: JSON.stringify({ username, password }),
-      });
+        {
+          id: "student-001",
+          username: "student",
+          password: "student123",
+          displayName: "学生",
+          role: "student" as const,
+          expiryDate: "2025-12-31"
+        }
+      ];
 
-      const data = await response.json();
+      const account = defaultAccounts.find(
+        acc => acc.username === username && acc.password === password
+      );
 
-      if (!response.ok) {
-        return data.message || "登录失败";
+      if (!account) {
+        return "用户名或密码错误";
       }
 
-      // 保存 token 和用户信息
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("currentUser", JSON.stringify(data.user));
-      setCurrentUser(data.user);
+      // 检查账户是否过期
+      if (account.expiryDate && new Date(account.expiryDate) < new Date()) {
+        return "账户已过期，请联系管理员";
+      }
+
+      const user: User = {
+        id: account.id,
+        username: account.username,
+        displayName: account.displayName,
+        role: account.role,
+        expiryDate: account.expiryDate
+      };
+
+      // 保存用户信息
+      localStorage.setItem("currentUser", JSON.stringify(user));
+      setCurrentUser(user);
 
       return true;
     } catch (error) {
       console.error("登录错误:", error);
-      return "网络错误，请检查后端服务是否启动";
+      return "登录失败，请重试";
     }
   };
 
   // 登出函数
   const logout = () => {
-    localStorage.removeItem("token");
     localStorage.removeItem("currentUser");
     setCurrentUser(null);
   };
