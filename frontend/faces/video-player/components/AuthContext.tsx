@@ -20,7 +20,6 @@ export interface User {
   lastLogin?: string;
   active: boolean;
   expiresAt?: string; // 账号有效期截止时间（ISO 8601 格式，北京时区）
-  validUntil?: string; // ← 添加这个字段，用于 face.tsx 中显示有效期
 }
 
 // 权限定义
@@ -37,6 +36,7 @@ export interface AuthContextType {
   currentUser: User | null;
   isAuthenticated: boolean;
   permissions: Permissions;
+  token: string | null; // JWT token（如果需要后端API验证时使用）
   login: (username: string, password: string) => Promise<boolean | string>;
   logout: () => void;
   isLoading: boolean;
@@ -76,6 +76,7 @@ const getRolePermissions = (role: UserRole): Permissions => {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // 初始化：检查登录状态
@@ -83,6 +84,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initAuth = () => {
       // 检查是否有记住的登录状态
       const savedAuth = localStorage.getItem('auth_session');
+      const savedToken = localStorage.getItem('auth_token');
+      
       if (savedAuth) {
         try {
           const { userId, expiresAt } = JSON.parse(savedAuth);
@@ -102,31 +105,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   // 账号已过期，清除 session
                   console.log('⚠️ 账号已过期，自动登出');
                   localStorage.removeItem('auth_session');
+                  localStorage.removeItem('auth_token');
                   setIsLoading(false);
                   return;
                 }
               }
               
-              // ✅ 同步 validUntil 字段（用于显示）
-              if (user.expiresAt && !user.validUntil) {
-                user.validUntil = user.expiresAt;
-              }
-              
               // session 有效且账号未过期
               setCurrentUser(user);
+              setToken(savedToken);
               // 更新最后登录时间
               updateLastLogin(userId);
             } else {
               // 用户不存在或已禁用，清除会话
               localStorage.removeItem('auth_session');
+              localStorage.removeItem('auth_token');
             }
           } else {
             // session 过期
             localStorage.removeItem('auth_session');
+            localStorage.removeItem('auth_token');
           }
         } catch (error) {
           console.error('恢复登录状态失败:', error);
           localStorage.removeItem('auth_session');
+          localStorage.removeItem('auth_token');
         }
       }
       
@@ -199,13 +202,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // ✅ 同步 validUntil 字段（用于显示）
-      if (user.expiresAt && !user.validUntil) {
-        user.validUntil = user.expiresAt;
-      }
-
       // 登录成功
       setCurrentUser(user);
+      
+      // 生成一个简单的 token（本地模式下只是一个标识）
+      const localToken = `local_${user.id}_${Date.now()}`;
+      setToken(localToken);
       
       // 保存登录状态（1天有效期）
       const session = {
@@ -213,6 +215,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         expiresAt: new Date().getTime() + 1 * 24 * 60 * 60 * 1000
       };
       localStorage.setItem('auth_session', JSON.stringify(session));
+      localStorage.setItem('auth_token', localToken);
       
       // 更新最后登录时间
       updateLastLogin(user.id);
@@ -229,7 +232,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 登出
   const logout = () => {
     setCurrentUser(null);
+    setToken(null);
     localStorage.removeItem('auth_session');
+    localStorage.removeItem('auth_token');
   };
 
   // 计算权限
@@ -249,6 +254,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         isAuthenticated: !!currentUser,
         permissions,
+        token,
         login,
         logout,
         isLoading

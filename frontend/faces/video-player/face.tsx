@@ -244,15 +244,25 @@ function VideoPlayerContent() {
               </>
             )}
 
-            {/* 用户信息 */}
-            <div className="ml-4 flex items-center gap-3 pl-4 border-l border-gray-200">
-              <div className="text-right">
-                <div className="text-sm font-medium text-gray-900">{currentUser.username}</div>
-                {currentUser.validUntil && (
-                  <div className="text-xs text-gray-500">
-                    有效期至: {new Date(currentUser.validUntil).toLocaleDateString()}
-                  </div>
-                )}
+
+             {/* 用户信息 */}
+              <div className="flex items-center gap-3 px-4 py-2 bg-gray-50 rounded-lg border border-gray-200">
+                <Icon name="user" size={16} className="text-gray-600" />
+                <div className="text-right">
+                  <div className="text-sm font-medium text-gray-900">{currentUser.username}</div>
+                  {currentUser.expiresAt && (
+                    <div className="text-xs text-gray-500">
+                      有效期至: {new Date(currentUser.expiresAt).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  currentUser?.role === 'admin'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-blue-100 text-blue-700'
+                }`}>
+                  {currentUser?.role === 'admin' ? '管理员' : '学生'}
+                </span>
               </div>
               <button
                 onClick={logout}
