@@ -9,6 +9,7 @@ interface User {
   displayName: string;
   role: "admin" | "student";
   expiryDate?: string;
+  validUntil?: string;  // ← 添加这个字段！
 }
 
 // 权限定义
@@ -25,7 +26,7 @@ export interface AuthContextType {
   currentUser: User | null;
   isAuthenticated: boolean;
   permissions: Permissions;
-  token: string | null;  // ← 添加这个！
+  token: string | null;
   login: (username: string, password: string) => Promise<boolean | string>;
   logout: () => void;
   isLoading: boolean;
@@ -35,7 +36,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);  // ← 添加这个！
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // 计算权限
@@ -50,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 初始化时从 localStorage 恢复用户状态
   useEffect(() => {
     const userStr = localStorage.getItem("currentUser");
-    const savedToken = localStorage.getItem("authToken");  // ← 添加这个！
+    const savedToken = localStorage.getItem("authToken");
 
     if (userStr && savedToken) {
       try {
@@ -62,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           logout();
         } else {
           setCurrentUser(user);
-          setToken(savedToken);  // ← 添加这个！
+          setToken(savedToken);
         }
       } catch (error) {
         console.error("解析用户信息失败:", error);
@@ -83,7 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           username: "admin",
           password: "admin123",
           displayName: "管理员",
-          role: "admin" as const
+          role: "admin" as const,
+          validUntil: undefined  // ← 管理员没有有效期
         },
         {
           id: "student-001",
@@ -91,7 +93,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           password: "student123",
           displayName: "学生",
           role: "student" as const,
-          expiryDate: "2025-12-31"
+          expiryDate: "2025-12-31",
+          validUntil: "2025-12-31"  // ← 学生账户有有效期
         }
       ];
 
@@ -113,18 +116,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username: account.username,
         displayName: account.displayName,
         role: account.role,
-        expiryDate: account.expiryDate
+        expiryDate: account.expiryDate,
+        validUntil: account.validUntil  // ← 添加这个字段
       };
 
       // 生成一个简单的 token（实际生产环境应该从后端获取 JWT）
-      const mockToken = `mock-token-${Date.now()}-${user.id}`;  // ← 添加这个！
+      const mockToken = `mock-token-${Date.now()}-${user.id}`;
 
       // 保存用户信息和 token
       localStorage.setItem("currentUser", JSON.stringify(user));
-      localStorage.setItem("authToken", mockToken);  // ← 添加这个！
+      localStorage.setItem("authToken", mockToken);
       
       setCurrentUser(user);
-      setToken(mockToken);  // ← 添加这个！
+      setToken(mockToken);
 
       return true;
     } catch (error) {
@@ -136,9 +140,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 登出函数
   const logout = () => {
     localStorage.removeItem("currentUser");
-    localStorage.removeItem("authToken");  // ← 添加这个！
+    localStorage.removeItem("authToken");
     setCurrentUser(null);
-    setToken(null);  // ← 添加这个！
+    setToken(null);
   };
 
   return (
@@ -147,7 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         currentUser,
         isAuthenticated: !!currentUser,
         permissions,
-        token,  // ← 添加这个！
+        token,
         login,
         logout,
         isLoading,
